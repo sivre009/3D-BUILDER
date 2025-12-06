@@ -1058,6 +1058,7 @@
             hotspots.forEach(h => {
                 if(h.spriteRef) {
                     h.spriteRef.scale.set(config.hsSize, config.hsSize, config.hsSize);
+                    h.spriteRef.material.opacity = config.hsOpacity;
                 }
             });
         }
