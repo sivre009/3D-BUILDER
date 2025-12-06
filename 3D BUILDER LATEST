@@ -1,0 +1,1787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Professional 3D Editor & Exporter</title>
+    <!-- Tailwind CSS for UI -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- JSZip for Zip Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <!-- Modern Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #000; color: #eee; font-family: 'Inter', sans-serif; }
+        
+        /* Layout Layers */
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; z-index: 0; outline: none; }
+        #vignette-overlay { 
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1;
+            background: radial-gradient(circle, rgba(0,0,0,0) 50%, rgba(0,0,0,0.4) 100%);
+        }
+        #branding-overlay {
+            position: absolute; bottom: 20px; left: 20px; z-index: 5; pointer-events: none;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+            transition: opacity 0.3s ease;
+        }
+        #branding-overlay.hidden { opacity: 0; }
+
+        #loading-overlay {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50;
+            background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center;
+            transition: opacity 0.8s ease-out;
+        }
+        
+        /* UI Elements */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: #171717; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+        ::-webkit-scrollbar-thumb:hover { background: #555; }
+
+        .disabled-section { opacity: 0.3; pointer-events: none; filter: grayscale(100%); }
+
+        /* Accordion Styles */
+        details > summary { list-style: none; cursor: pointer; outline: none; transition: color 0.2s; }
+        details > summary::-webkit-details-marker { display: none; }
+        details[open] > summary .arrow { transform: rotate(180deg); }
+        
+        /* Compact Slider Styles */
+        .compact-slider-container {
+            position: relative;
+            height: 28px;
+            background-color: #1a1a1a;
+            border-radius: 4px;
+            overflow: hidden;
+            border: 1px solid #333;
+            transition: border-color 0.2s;
+        }
+        .compact-slider-container:hover { border-color: #555; }
+        
+        /* The visual fill bar */
+        .slider-fill {
+            position: absolute;
+            top: 0; left: 0; bottom: 0;
+            background-color: rgba(59, 130, 246, 0.3); /* Blue tint */
+            pointer-events: none;
+            transition: width 0.05s linear;
+        }
+        
+        /* Text overlay */
+        .slider-label {
+            position: absolute;
+            left: 8px; top: 0; bottom: 0;
+            display: flex; align-items: center;
+            font-size: 11px; font-weight: 500; color: #d4d4d4;
+            pointer-events: none;
+            user-select: none;
+        }
+        .slider-value {
+            position: absolute;
+            right: 8px; top: 0; bottom: 0;
+            display: flex; align-items: center;
+            font-size: 11px; font-family: monospace; color: #3b82f6;
+            pointer-events: none;
+            user-select: none;
+        }
+
+        /* The actual invisible input */
+        .ghost-input {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            opacity: 0;
+            cursor: ew-resize; /* Horizontal resize cursor */
+            margin: 0;
+        }
+
+        /* Color Input Compact */
+        .compact-color {
+            display: flex; justify-content: space-between; align-items: center;
+            height: 28px; background: #1a1a1a; border-radius: 4px; padding: 0 8px;
+            border: 1px solid #333;
+        }
+        .compact-color input[type="color"] {
+            width: 20px; height: 20px; border: none; padding: 0; background: none; cursor: pointer;
+        }
+        
+        /* Spinner */
+        .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Sleek Hotspot Popup */
+        .hotspot-card {
+            position: absolute;
+            top: 0; left: 0;
+            
+            /* Smart Scaling Logic: Max dimension controlled by CSS var */
+            max-width: var(--card-scale, 400px);
+            max-height: var(--card-scale, 400px);
+            width: auto;
+            height: auto;
+            
+            background: rgba(20, 20, 20, 0.85);
+            backdrop-filter: blur(12px);
+            border: none;
+            border-radius: 16px;
+            padding: 0;
+            color: white;
+            z-index: 100;
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            display: none;
+            transform: translate(-50%, -105%); /* Center bottom anchor with gap */
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            overflow: hidden; /* Clips content to rounded corners */
+            
+            /* Flex layout to handle content sizing */
+            display: flex;
+            flex-direction: column;
+        }
+        .hotspot-card.visible { display: flex; opacity: 1; }
+        
+        /* Edge-to-edge media with smart containment */
+        .hotspot-card img, .hotspot-card video { 
+            display: block; 
+            margin: 0;
+            width: auto;
+            height: auto;
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        
+        /* Container for text to ensure it scrolls if long */
+        #card-content {
+            display: flex;
+            flex-direction: column;
+            overflow: auto;
+            max-height: 100%;
+            width: 100%;
+        }
+
+        /* Content padding only for text */
+        .hotspot-content-inner {
+            padding: 16px;
+        }
+        .hotspot-content-inner p { 
+            font-size: 13px; color: #ddd; line-height: 1.5; margin: 0; font-weight: 300; 
+        }
+        /* Hide padding if empty */
+        .hotspot-content-inner:empty { display: none; }
+
+        /* Floating Close Button */
+        .hotspot-close { 
+            position: absolute; top: 12px; right: 12px; 
+            width: 24px; height: 24px;
+            background: rgba(0,0,0,0.4);
+            backdrop-filter: blur(4px);
+            border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: #fff; font-size: 14px; line-height: 1; 
+            transition: background 0.2s;
+            z-index: 10;
+        }
+        .hotspot-close:hover { background: rgba(255,255,255,0.2); }
+
+        /* Custom Cursor for placement */
+        .cursor-crosshair { cursor: crosshair !important; }
+
+        /* Hidden File Inputs */
+        #media-picker { display: none; }
+        #project-load-input { display: none; }
+    </style>
+</head>
+<body>
+
+    <!-- LOADING SCREEN -->
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- VIGNETTE -->
+    <div id="vignette-overlay"></div>
+
+    <!-- BRANDING -->
+    <div id="branding-overlay">
+        <h1 id="brand-title-display" class="text-2xl font-light text-white tracking-wide">Untitled Project</h1>
+        <p id="brand-author-display" class="text-xs text-neutral-400 mt-1 uppercase tracking-widest">By Author</p>
+    </div>
+
+    <!-- HOTSPOT INFO CARD (Floating) -->
+    <div id="hotspot-card" class="hotspot-card">
+        <div class="hotspot-close" id="btn-close-card">×</div>
+        <div id="card-content"></div>
+    </div>
+
+    <!-- Hidden Media Inputs -->
+    <input type="file" id="media-picker" accept="image/*,video/*">
+    <input type="file" id="project-load-input" accept=".json,.3dproject">
+
+    <!-- UI SIDEBAR -->
+    <div id="sidebar" class="absolute left-0 top-0 h-full w-80 bg-[#0f0f0f] border-r border-[#222] z-10 flex flex-col shadow-2xl">
+        
+        <!-- Header -->
+        <div class="p-4 border-b border-[#222] bg-[#0f0f0f] z-20">
+            <h1 class="text-sm font-bold text-neutral-200 tracking-wide flex items-center gap-2">
+                <div class="w-2 h-2 bg-blue-500 rounded-full"></div>
+                3D STUDIO <span class="text-[10px] text-neutral-600 font-normal">v5.0</span>
+            </h1>
+        </div>
+
+        <!-- Scrollable Controls -->
+        <div class="flex-1 overflow-y-auto p-4 space-y-4">
+
+            <!-- Project Management Section (New) -->
+            <details class="group" open>
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Project Management <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="grid grid-cols-2 gap-2">
+                        <button id="btn-save-project" class="bg-emerald-900/40 hover:bg-emerald-800 text-emerald-100 text-[10px] py-2 rounded border border-emerald-900 transition-colors">
+                            Save Project
+                        </button>
+                        <button id="btn-load-project" class="bg-blue-900/40 hover:bg-blue-800 text-blue-100 text-[10px] py-2 rounded border border-blue-900 transition-colors">
+                            Load Project
+                        </button>
+                    </div>
+                </div>
+            </details>
+
+            <hr class="border-[#222]">
+
+            <!-- Assets Section -->
+            <details class="group" open>
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Assets <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="group relative">
+                        <input type="file" id="file-input" accept=".glb" class="block w-full text-[10px] text-neutral-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-[#222] file:text-neutral-300 hover:file:bg-[#333] cursor-pointer">
+                    </div>
+                    <div class="group relative flex gap-2">
+                        <input type="file" id="hdr-input" accept=".hdr" class="block w-full text-[10px] text-neutral-400 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-[10px] file:font-semibold file:bg-[#222] file:text-neutral-300 hover:file:bg-[#333] cursor-pointer">
+                        <button id="btn-remove-hdri" class="bg-[#222] hover:bg-red-900/50 text-neutral-400 hover:text-white px-2 rounded text-[10px] transition-colors">✕</button>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Branding Section -->
+            <details class="group" open>
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Project Info <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="compact-color mb-2">
+                        <span class="text-[11px] text-neutral-300">Show Overlay</span>
+                        <input type="checkbox" id="branding-visible" checked>
+                    </div>
+                    <input type="text" id="brand-title-input" value="Untitled Project" placeholder="Project Title" class="w-full bg-[#1a1a1a] text-xs text-white p-2 h-7 rounded border border-[#333] focus:border-blue-600 outline-none placeholder-neutral-600">
+                    <input type="text" id="brand-author-input" value="By Author" placeholder="Author Name" class="w-full bg-[#1a1a1a] text-xs text-white p-2 h-7 rounded border border-[#333] focus:border-blue-600 outline-none placeholder-neutral-600">
+                </div>
+            </details>
+            
+            <hr class="border-[#222]">
+
+            <!-- HOTSPOTS SECTION -->
+            <details class="group" open>
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Interactive Hotspots <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    
+                    <!-- Visual Settings -->
+                    <div class="grid grid-cols-2 gap-2 mb-2">
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-hs-size" style="width: 25%"></div>
+                            <span class="slider-label">Dot Size</span>
+                            <span class="slider-value" id="val-hs-size">0.5</span>
+                            <input type="range" id="hs-size" class="ghost-input" min="0.1" max="2.0" step="0.1" value="0.5">
+                        </div>
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-hs-opacity" style="width: 80%"></div>
+                            <span class="slider-label">Opacity</span>
+                            <span class="slider-value" id="val-hs-opacity">0.8</span>
+                            <input type="range" id="hs-opacity" class="ghost-input" min="0.1" max="1.0" step="0.1" value="0.8">
+                        </div>
+                    </div>
+                    <div class="compact-slider-container mb-3">
+                        <div class="slider-fill" id="fill-hs-popup-scale" style="width: 50%"></div>
+                        <span class="slider-label">Popup Scale</span>
+                        <span class="slider-value" id="val-hs-popup-scale">400px</span>
+                        <input type="range" id="hs-popup-scale" class="ghost-input" min="200" max="800" step="10" value="400">
+                    </div>
+
+                    <!-- Placement Toggle -->
+                    <button id="btn-toggle-place" class="w-full py-2 px-3 bg-[#222] hover:bg-blue-900/30 text-xs text-neutral-300 rounded border border-[#333] transition-colors flex items-center justify-between">
+                        <span>Placement Mode</span>
+                        <div id="indicator-place" class="w-2 h-2 rounded-full bg-red-500"></div>
+                    </button>
+                    <p class="text-[9px] text-neutral-500 italic">Toggle ON, then click model to add hotspot.</p>
+                    
+                    <!-- Hotspot List -->
+                    <div id="hotspot-list-container" class="space-y-2 mt-3">
+                        <!-- Dynamic Hotspots will appear here -->
+                    </div>
+                </div>
+            </details>
+
+            <hr class="border-[#222]">
+
+            <!-- Materials Section -->
+            <details class="group">
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Materials <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    
+                    <div class="compact-color">
+                        <span class="text-[11px] text-neutral-300">Disable Reflections</span>
+                        <input type="checkbox" id="mat-disable-reflections">
+                    </div>
+
+                    <div id="material-sliders" class="space-y-2">
+                        <!-- Roughness -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-mat-roughness" style="width: 50%"></div>
+                            <span class="slider-label">Roughness</span>
+                            <span class="slider-value" id="val-mat-roughness">0.5</span>
+                            <input type="range" id="mat-roughness" class="ghost-input" min="0" max="1" step="0.01" value="0.5">
+                        </div>
+
+                        <!-- Metalness -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-mat-metalness" style="width: 5%"></div>
+                            <span class="slider-label">Metalness</span>
+                            <span class="slider-value" id="val-mat-metalness">0.05</span>
+                            <input type="range" id="mat-metalness" class="ghost-input" min="0" max="1" step="0.01" value="0.05">
+                        </div>
+
+                        <!-- Specular -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill !bg-green-500/20" id="fill-mat-specular" style="width: 100%"></div>
+                            <span class="slider-label text-green-100">Specular</span>
+                            <span class="slider-value !text-green-400" id="val-mat-specular">1.0</span>
+                            <input type="range" id="mat-specular" class="ghost-input" min="0" max="1" step="0.01" value="1.0">
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Edges Section -->
+            <details class="group">
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Edge Lines <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="compact-color">
+                        <span class="text-[11px] text-neutral-300">Show Edges</span>
+                        <input type="checkbox" id="edge-visible">
+                    </div>
+                    
+                    <div id="edge-controls" class="space-y-2 disabled-section">
+                        <!-- Threshold -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-edge-angle" style="width: 15%"></div>
+                            <span class="slider-label">Threshold</span>
+                            <span class="slider-value" id="val-edge-angle">15°</span>
+                            <input type="range" id="edge-angle" class="ghost-input" min="1" max="90" step="1" value="15">
+                        </div>
+
+                        <!-- Color -->
+                        <div class="compact-color">
+                            <span class="text-[11px] text-neutral-300">Edge Color</span>
+                            <input type="color" id="edge-color" value="#000000">
+                        </div>
+
+                        <!-- Opacity -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-edge-opacity" style="width: 50%"></div>
+                            <span class="slider-label">Opacity</span>
+                            <span class="slider-value" id="val-edge-opacity">0.5</span>
+                            <input type="range" id="edge-opacity" class="ghost-input" min="0" max="1" step="0.1" value="0.5">
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Lighting Section -->
+            <details class="group">
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Lighting <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    
+                    <!-- Sun Toggle -->
+                    <div class="compact-color border-l-2 border-l-yellow-600">
+                        <span class="text-[11px] text-yellow-500 font-bold uppercase">Sun Light</span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[9px] text-neutral-500">SHADOWS</span>
+                            <input type="checkbox" id="sun-cast-shadow">
+                        </div>
+                    </div>
+
+                    <div class="space-y-2 pl-2">
+                        <!-- Sun Intensity -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill !bg-yellow-500/20" id="fill-sun-intensity" style="width: 30%"></div>
+                            <span class="slider-label">Intensity</span>
+                            <span class="slider-value !text-yellow-500" id="val-sun-intensity">1.5</span>
+                            <input type="range" id="sun-intensity" class="ghost-input" min="0" max="5" step="0.1" value="1.5">
+                        </div>
+                        
+                        <!-- Sun Color -->
+                        <div class="compact-color">
+                            <span class="text-[11px] text-neutral-300">Sun Color</span>
+                            <input type="color" id="sun-color" value="#ffffff">
+                        </div>
+
+                        <!-- Position (2 Cols) -->
+                        <div class="grid grid-cols-2 gap-2">
+                            <div class="compact-slider-container">
+                                <div class="slider-fill" id="fill-sun-azimuth" style="width: 12%"></div>
+                                <span class="slider-label">Rot</span>
+                                <span class="slider-value" id="val-sun-azimuth">45°</span>
+                                <input type="range" id="sun-azimuth" class="ghost-input" min="0" max="360" step="1" value="45">
+                            </div>
+                            <div class="compact-slider-container">
+                                <div class="slider-fill" id="fill-sun-elevation" style="width: 66%"></div>
+                                <span class="slider-label">Alt</span>
+                                <span class="slider-value" id="val-sun-elevation">60°</span>
+                                <input type="range" id="sun-elevation" class="ghost-input" min="0" max="90" step="1" value="60">
+                            </div>
+                        </div>
+
+                        <!-- Shadow Opacity -->
+                        <div class="compact-slider-container">
+                            <div class="slider-fill" id="fill-shadow-opacity" style="width: 50%"></div>
+                            <span class="slider-label">Shad. Opacity</span>
+                            <span class="slider-value" id="val-shadow-opacity">0.5</span>
+                            <input type="range" id="shadow-opacity" class="ghost-input" min="0" max="1" step="0.05" value="0.5">
+                        </div>
+                    </div>
+
+                    <!-- Ambient -->
+                    <div class="compact-color border-l-2 border-l-blue-600 mt-4">
+                        <span class="text-[11px] text-blue-400 font-bold uppercase">Ambient Fill</span>
+                        <input type="color" id="amb-color" value="#ffffff">
+                    </div>
+                    <div class="pl-2">
+                        <div class="compact-slider-container">
+                            <div class="slider-fill !bg-blue-500/20" id="fill-amb-intensity" style="width: 26%"></div>
+                            <span class="slider-label">Intensity</span>
+                            <span class="slider-value !text-blue-400" id="val-amb-intensity">0.8</span>
+                            <input type="range" id="amb-intensity" class="ghost-input" min="0" max="3" step="0.1" value="0.8">
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+            <!-- Shadow Tuning Section -->
+            <details class="group">
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Shadow Tuning <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-shadow-bias" style="width: 45%"></div>
+                        <span class="slider-label">Bias Fix</span>
+                        <span class="slider-value" id="val-shadow-bias">-0.0005</span>
+                        <input type="range" id="shadow-bias" class="ghost-input" min="-0.005" max="0.005" step="0.0001" value="-0.0005">
+                    </div>
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-shadow-normal-bias" style="width: 0%"></div>
+                        <span class="slider-label">Normal Bias</span>
+                        <span class="slider-value" id="val-shadow-normal-bias">0.0</span>
+                        <input type="range" id="shadow-normal-bias" class="ghost-input" min="0" max="0.2" step="0.001" value="0.0">
+                    </div>
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-ao-intensity" style="width: 20%"></div>
+                        <span class="slider-label">AO Strength</span>
+                        <span class="slider-value" id="val-ao-intensity">1.0</span>
+                        <input type="range" id="ao-intensity" class="ghost-input" min="0" max="5" step="0.1" value="1.0">
+                    </div>
+                </div>
+            </details>
+
+            <!-- Camera Section -->
+            <details class="group">
+                <summary class="flex justify-between items-center text-[11px] font-bold text-neutral-500 uppercase tracking-wider mb-2 hover:text-white">
+                    Camera & View <span class="arrow transition-transform duration-200">▼</span>
+                </summary>
+                <div class="space-y-2 pl-2 border-l border-[#222]">
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-cam-exposure" style="width: 33%"></div>
+                        <span class="slider-label">Exposure</span>
+                        <span class="slider-value" id="val-cam-exposure">1.0</span>
+                        <input type="range" id="cam-exposure" class="ghost-input" min="0.1" max="3.0" step="0.1" value="1.0">
+                    </div>
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-cam-contrast" style="width: 33%"></div>
+                        <span class="slider-label">Contrast</span>
+                        <span class="slider-value" id="val-cam-contrast">1.0</span>
+                        <input type="range" id="cam-contrast" class="ghost-input" min="0.5" max="2.0" step="0.05" value="1.0">
+                    </div>
+                    <div class="compact-slider-container">
+                        <div class="slider-fill" id="fill-cam-saturation" style="width: 50%"></div>
+                        <span class="slider-label">Saturation</span>
+                        <span class="slider-value" id="val-cam-saturation">1.0</span>
+                        <input type="range" id="cam-saturation" class="ghost-input" min="0.0" max="2.0" step="0.05" value="1.0">
+                    </div>
+                    
+                    <div class="pt-2 mt-2 border-t border-[#222]">
+                        <div class="compact-color">
+                            <span class="text-[11px] text-neutral-300">Auto Rotate</span>
+                            <input type="checkbox" id="auto-rotate">
+                        </div>
+                        <div class="space-y-2 mt-2">
+                             <div class="compact-slider-container">
+                                <div class="slider-fill" id="fill-rot-speed" style="width: 20%"></div>
+                                <span class="slider-label">Speed</span>
+                                <span class="slider-value" id="val-rot-speed">2.0</span>
+                                <input type="range" id="rot-speed" class="ghost-input" min="0.1" max="10" step="0.1" value="2.0">
+                            </div>
+                             <div class="compact-slider-container">
+                                <div class="slider-fill" id="fill-rot-delay" style="width: 20%"></div>
+                                <span class="slider-label">Delay</span>
+                                <span class="slider-value" id="val-rot-delay">2.0s</span>
+                                <input type="range" id="rot-delay" class="ghost-input" min="0" max="10" step="0.5" value="2.0">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="pt-2 border-t border-[#222]">
+                        <p class="text-[9px] text-neutral-500 mb-2 uppercase">Background Gradient</p>
+                        <div class="flex gap-2">
+                            <input type="color" id="bg-color-1" value="#292929" class="color-input w-full bg-[#1a1a1a] rounded h-6">
+                            <input type="color" id="bg-color-2" value="#000000" class="color-input w-full bg-[#1a1a1a] rounded h-6">
+                        </div>
+                    </div>
+                </div>
+            </details>
+
+        </div>
+
+        <!-- Footer / Export -->
+        <div class="p-4 bg-[#0f0f0f] border-t border-[#222] space-y-2">
+            <button id="btn-export" class="w-full bg-[#1a1a1a] hover:bg-[#252525] text-neutral-300 text-[10px] font-bold py-2 px-3 rounded transition-colors flex items-center justify-center gap-2 border border-[#333]">
+                HTML (Embedded)
+            </button>
+            <button id="btn-export-zip" class="w-full bg-blue-700 hover:bg-blue-600 text-white text-[10px] font-bold py-2 px-3 rounded transition-colors flex items-center justify-center gap-2">
+                ZIP Package (Optimized)
+            </button>
+        </div>
+    </div>
+
+    <!-- 3D VIEWPORT -->
+    <div id="canvas-container"></div>
+
+    <!-- Module Script -->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+        // --- GLOBAL VARIABLES ---
+        let scene, camera, renderer, controls, sunLight, ambientLight, shadowPlaneMaterial;
+        let modelObject = null;
+        let currentModelBase64 = null;
+        let currentHdriBase64 = null;
+        let rotationTimeout;
+        let raycaster, pointer;
+        
+        // Hotspot State
+        let hotspots = []; // { id, position: {x,y,z}, content, spriteRef }
+        let isPlacementMode = false;
+        let activeHotspot = null;
+        let targetHotspotIdForMedia = null; 
+        let hotspotSpriteMaterial;
+        
+        // Configuration
+        let config = {
+            // Updated defaults from request
+            bgTop: '#292929', bgBot: '#000000', 
+            sunCastShadow: true, // Shadow toggle default
+            sunIntensity: 4.1, sunColor: '#ffffff', sunAzimuth: 318, sunElevation: 63,
+            ambIntensity: 0.6, ambColor: '#ffffff', 
+            shadowBias: -0.0001, normalBias: 0.0, shadowOpacity: 0.5, aoIntensity: 1.0, 
+            disableReflections: false, roughness: 0.5, metalness: 0.05, envMapIntensity: 1.0, specularIntensity: 1.0,
+            exposure: 1.4, contrast: 0.9, saturation: 0.85,
+            autoRotate: false, rotateSpeed: 2.0, damping: 0.05, autoRotateDelay: 2.0,
+            projectTitle: "Untitled Project", projectAuthor: "By Author", brandingVisible: true,
+            // Edge Settings
+            edgeVisible: false, edgeThreshold: 15, edgeColor: "#000000", edgeOpacity: 0.5,
+            // Hotspot Settings
+            hsSize: 0.5, hsOpacity: 0.8, hsPopupScale: 400
+        };
+
+        function init() {
+            // Initial UI Sync
+            syncUI();
+
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 5, 15);
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Optimized Shadows
+            renderer.outputEncoding = THREE.SRGBColorSpace; 
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = config.exposure;
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = config.damping;
+            controls.enableZoom = true;
+            controls.zoomSpeed = 0.8;
+            controls.rotateSpeed = 0.5;
+            controls.panSpeed = 0.5;
+            controls.screenSpacePanning = true;
+            controls.autoRotate = config.autoRotate;
+            
+            // Interaction Delay
+            controls.addEventListener('start', () => {
+                clearTimeout(rotationTimeout);
+                controls.autoRotate = false;
+            });
+            
+            controls.addEventListener('end', () => {
+                if (config.autoRotate) {
+                    clearTimeout(rotationTimeout);
+                    rotationTimeout = setTimeout(() => {
+                        controls.autoRotate = true;
+                    }, config.autoRotateDelay * 1000);
+                }
+            });
+            controls.addEventListener('change', updateHotspotPopupPosition); // Track popup when moving
+
+            // Raycaster for interactions
+            raycaster = new THREE.Raycaster();
+            pointer = new THREE.Vector2();
+
+            setupLights();
+            setupShadowPlane();
+            setupHotspotMaterial();
+
+            window.addEventListener('resize', onWindowResize);
+            window.addEventListener('pointerdown', onPointerDown); // Hotspot Interaction
+            window.addEventListener('keydown', (e) => { if(e.key === 'Escape') closeHotspotPopup(); }); // ESC Close
+            setupUIListeners();
+            updateBackground();
+            
+            // Remove loader when scene is ready (basic simulation)
+            setTimeout(() => {
+                document.getElementById('loading-overlay').style.opacity = '0';
+                setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 800);
+            }, 1000);
+
+            animate();
+        }
+
+        // Calculate fill percentage for visual sliders
+        function updateSliderVisual(id, val) {
+            const el = document.getElementById(id);
+            if(!el) return;
+            const min = parseFloat(el.min);
+            const max = parseFloat(el.max);
+            const current = parseFloat(val);
+            const percent = ((current - min) / (max - min)) * 100;
+            const fillId = `fill-${id}`;
+            const fillEl = document.getElementById(fillId);
+            if(fillEl) fillEl.style.width = `${percent}%`;
+        }
+
+        // Helper to set UI input values to match config defaults on load
+        function syncUI() {
+            const setVal = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) {
+                    el.value = val;
+                    updateSliderVisual(id, val);
+                }
+            };
+            const setChecked = (id, val) => {
+                const el = document.getElementById(id);
+                if (el) el.checked = val;
+            };
+            const setTxt = (id, val) => {
+                const el = document.getElementById(id); // Usually val-ID
+                if (el) el.innerText = val;
+            };
+
+            setVal('bg-color-1', config.bgTop);
+            setVal('bg-color-2', config.bgBot);
+            setVal('sun-intensity', config.sunIntensity);
+            setVal('sun-color', config.sunColor);
+            setVal('sun-azimuth', config.sunAzimuth);
+            setVal('sun-elevation', config.sunElevation);
+            setVal('amb-intensity', config.ambIntensity);
+            setVal('amb-color', config.ambColor);
+            setVal('shadow-bias', config.shadowBias);
+            setVal('shadow-normal-bias', config.normalBias);
+            setVal('shadow-opacity', config.shadowOpacity);
+            setVal('ao-intensity', config.aoIntensity);
+            setVal('mat-roughness', config.roughness);
+            setVal('mat-metalness', config.metalness);
+            setVal('mat-specular', config.specularIntensity);
+            setVal('cam-exposure', config.exposure);
+            setVal('cam-contrast', config.contrast);
+            setVal('cam-saturation', config.saturation);
+            setVal('rot-speed', config.rotateSpeed);
+            setVal('rot-delay', config.autoRotateDelay);
+            setVal('brand-title-input', config.projectTitle);
+            setVal('brand-author-input', config.projectAuthor);
+            
+            // Edge inputs
+            setChecked('edge-visible', config.edgeVisible);
+            setVal('edge-angle', config.edgeThreshold);
+            setVal('edge-color', config.edgeColor);
+            setVal('edge-opacity', config.edgeOpacity);
+            
+            // Hotspot inputs
+            setVal('hs-size', config.hsSize);
+            setVal('hs-opacity', config.hsOpacity);
+            setVal('hs-popup-scale', config.hsPopupScale);
+            
+            setChecked('mat-disable-reflections', config.disableReflections);
+            setChecked('auto-rotate', config.autoRotate);
+            setChecked('sun-cast-shadow', config.sunCastShadow); 
+            setChecked('branding-visible', config.brandingVisible);
+            
+            // Labels (Manual sync for init)
+            setTxt('val-sun-intensity', config.sunIntensity);
+            setTxt('val-sun-azimuth', config.sunAzimuth + '°');
+            setTxt('val-sun-elevation', config.sunElevation + '°');
+            setTxt('val-amb-intensity', config.ambIntensity);
+            setTxt('val-shadow-bias', config.shadowBias);
+            setTxt('val-shadow-normal-bias', config.normalBias);
+            setTxt('val-shadow-opacity', config.shadowOpacity);
+            setTxt('val-ao-intensity', config.aoIntensity);
+            setTxt('val-mat-roughness', config.roughness);
+            setTxt('val-mat-metalness', config.metalness);
+            setTxt('val-mat-specular', config.specularIntensity);
+            setTxt('val-cam-exposure', config.exposure);
+            setTxt('val-cam-contrast', config.contrast);
+            setTxt('val-cam-saturation', config.saturation);
+            setTxt('val-rot-speed', config.rotateSpeed);
+            setTxt('val-rot-delay', config.autoRotateDelay + 's');
+            setTxt('val-edge-angle', config.edgeThreshold + '°');
+            setTxt('val-edge-opacity', config.edgeOpacity);
+            setTxt('val-hs-size', config.hsSize);
+            setTxt('val-hs-opacity', config.hsOpacity);
+            setTxt('val-hs-popup-scale', config.hsPopupScale + 'px');
+            
+            // Branding Text
+            setTxt('brand-title-display', config.projectTitle);
+            setTxt('brand-author-display', config.projectAuthor);
+            updateBrandingVisibility();
+            updateHotspotPopupScale();
+        }
+
+        function setupLights() {
+            ambientLight = new THREE.AmbientLight(config.ambColor, config.ambIntensity);
+            scene.add(ambientLight);
+
+            sunLight = new THREE.DirectionalLight(config.sunColor, config.sunIntensity);
+            sunLight.castShadow = config.sunCastShadow; 
+            sunLight.shadow.mapSize.width = 2048;
+            sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.bias = config.shadowBias;
+            sunLight.shadow.normalBias = config.normalBias;
+            updateSunPosition();
+            scene.add(sunLight);
+        }
+
+        function setupShadowPlane() {
+            const planeGeometry = new THREE.PlaneGeometry(200, 200);
+            shadowPlaneMaterial = new THREE.ShadowMaterial({ opacity: config.shadowOpacity });
+            const plane = new THREE.Mesh(planeGeometry, shadowPlaneMaterial);
+            plane.rotation.x = -Math.PI / 2;
+            plane.position.y = -0.01;
+            plane.receiveShadow = true;
+            scene.add(plane);
+        }
+
+        function setupHotspotMaterial() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 64; canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.beginPath();
+            ctx.arc(32, 32, 28, 0, Math.PI * 2);
+            ctx.fillStyle = "rgba(255, 255, 255, 1.0)";
+            ctx.fill();
+            ctx.lineWidth = 4;
+            ctx.strokeStyle = "rgba(0, 0, 0, 0.5)";
+            ctx.stroke();
+            const texture = new THREE.CanvasTexture(canvas);
+            hotspotSpriteMaterial = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+        }
+
+        function updateSunPosition() {
+            const r = 20;
+            const phi = THREE.MathUtils.degToRad(90 - config.sunElevation);
+            const theta = THREE.MathUtils.degToRad(config.sunAzimuth);
+            sunLight.position.set(r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.cos(theta));
+        }
+
+        function updateLights() {
+            sunLight.intensity = parseFloat(config.sunIntensity);
+            sunLight.color.set(config.sunColor);
+            sunLight.castShadow = config.sunCastShadow; 
+            sunLight.shadow.bias = parseFloat(config.shadowBias);
+            sunLight.shadow.normalBias = parseFloat(config.normalBias);
+            updateSunPosition();
+            
+            ambientLight.intensity = parseFloat(config.ambIntensity);
+            ambientLight.color.set(config.ambColor);
+            
+            if(shadowPlaneMaterial) {
+                shadowPlaneMaterial.opacity = parseFloat(config.shadowOpacity);
+            }
+
+            renderer.toneMappingExposure = parseFloat(config.exposure);
+        }
+
+        function updateMaterialSettings() {
+             if (!modelObject) return;
+             const sliders = document.getElementById('material-sliders');
+             if(config.disableReflections) sliders.classList.add('disabled-section');
+             else sliders.classList.remove('disabled-section');
+
+             modelObject.traverse(function(node) {
+                if (node.isMesh && node.material) {
+                    node.material.aoMapIntensity = parseFloat(config.aoIntensity);
+                    
+                    if (config.disableReflections) {
+                        node.material.roughness = 1.0;
+                        node.material.metalness = 0.0;
+                        node.material.envMapIntensity = 0.0;
+                        node.material.specularIntensity = 0.0; 
+                    } else {
+                        node.material.roughness = parseFloat(config.roughness);
+                        node.material.metalness = parseFloat(config.metalness);
+                        node.material.envMapIntensity = parseFloat(config.envMapIntensity);
+                        if(node.material.specularIntensity !== undefined) {
+                            node.material.specularIntensity = parseFloat(config.specularIntensity);
+                        }
+                    }
+                    node.material.needsUpdate = true;
+                }
+             });
+        }
+
+        // --- EDGE LOGIC ---
+        function updateEdges() {
+            if (!modelObject) return;
+            const controls = document.getElementById('edge-controls');
+            if (config.edgeVisible) controls.classList.remove('disabled-section');
+            else controls.classList.add('disabled-section');
+
+            modelObject.traverse(function(node) {
+                if (node.isMesh) {
+                    const existingEdges = node.children.find(child => child.name === '__edges__');
+                    if (!config.edgeVisible) {
+                        if (existingEdges) node.remove(existingEdges);
+                        return;
+                    }
+                    if (existingEdges) {
+                        existingEdges.material.color.set(config.edgeColor);
+                        existingEdges.material.opacity = config.edgeOpacity;
+                    } else {
+                        const edgesGeom = new THREE.EdgesGeometry(node.geometry, config.edgeThreshold);
+                        const edgesMat = new THREE.LineBasicMaterial({ color: config.edgeColor, transparent: true, opacity: config.edgeOpacity });
+                        const edges = new THREE.LineSegments(edgesGeom, edgesMat);
+                        edges.name = '__edges__';
+                        node.add(edges);
+                    }
+                }
+            });
+        }
+        
+        function rebuildEdges() {
+            if (!modelObject || !config.edgeVisible) return;
+            modelObject.traverse(function(node) {
+                if (node.isMesh) {
+                    const existingEdges = node.children.find(child => child.name === '__edges__');
+                    if(existingEdges) {
+                        node.remove(existingEdges);
+                        existingEdges.geometry.dispose();
+                    }
+                    const edgesGeom = new THREE.EdgesGeometry(node.geometry, parseFloat(config.edgeThreshold));
+                    const edgesMat = new THREE.LineBasicMaterial({ color: config.edgeColor, transparent: true, opacity: config.edgeOpacity });
+                    const edges = new THREE.LineSegments(edgesGeom, edgesMat);
+                    edges.name = '__edges__';
+                    node.add(edges);
+                }
+            });
+        }
+
+        // --- HOTSPOT LOGIC ---
+        function togglePlacementMode() {
+            isPlacementMode = !isPlacementMode;
+            const btn = document.getElementById('btn-toggle-place');
+            const ind = document.getElementById('indicator-place');
+            const canvas = document.getElementById('canvas-container');
+            
+            if (isPlacementMode) {
+                btn.classList.add('border-blue-500', 'bg-blue-900/20');
+                ind.classList.remove('bg-red-500');
+                ind.classList.add('bg-green-500', 'animate-pulse');
+                btn.querySelector('span').innerText = "Placement Mode: ON";
+                canvas.classList.add('cursor-crosshair');
+                // Hide popup if open
+                closeHotspotPopup();
+            } else {
+                btn.classList.remove('border-blue-500', 'bg-blue-900/20');
+                ind.classList.add('bg-red-500');
+                ind.classList.remove('bg-green-500', 'animate-pulse');
+                btn.querySelector('span').innerText = "Placement Mode";
+                canvas.classList.remove('cursor-crosshair');
+            }
+        }
+
+        function createHotspot(position, id = null, content = null) {
+            const hId = id || 'hs_' + Date.now();
+            const hContent = content || `<div class="hotspot-content-inner"><p>Add content here.</p></div>`;
+            
+            // Create Visual Sprite
+            const sprite = new THREE.Sprite(hotspotSpriteMaterial);
+            sprite.position.copy(position);
+            sprite.scale.set(config.hsSize, config.hsSize, config.hsSize); 
+            sprite.material.opacity = config.hsOpacity;
+            sprite.renderOrder = 999;
+            sprite.userData = { isHotspot: true, id: hId };
+            scene.add(sprite);
+
+            const hotspotData = {
+                id: hId,
+                position: { x: position.x, y: position.y, z: position.z },
+                content: hContent,
+                spriteRef: sprite
+            };
+            
+            hotspots.push(hotspotData);
+            renderHotspotList();
+            
+            // Reset Mode if creating new
+            if(!id && isPlacementMode) togglePlacementMode();
+        }
+
+        function deleteHotspot(id) {
+            const index = hotspots.findIndex(h => h.id === id);
+            if (index > -1) {
+                const h = hotspots[index];
+                scene.remove(h.spriteRef);
+                hotspots.splice(index, 1);
+                renderHotspotList();
+                closeHotspotPopup();
+            }
+        }
+
+        function updateHotspotData(id, value) {
+            const h = hotspots.find(h => h.id === id);
+            if(h) {
+                h.content = value;
+                // If popup is open for this one, update it live
+                if(activeHotspot === h) {
+                    document.getElementById('card-content').innerHTML = value;
+                }
+            }
+        }
+        
+        function attachMediaToHotspot(id) {
+            targetHotspotIdForMedia = id;
+            document.getElementById('media-picker').click();
+        }
+
+        function handleMediaSelection(event) {
+            const file = event.target.files[0];
+            if(!file || !targetHotspotIdForMedia) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const result = e.target.result;
+                let htmlTag = '';
+                if(file.type.startsWith('image/')) {
+                    htmlTag = `<img src="${result}" alt="Image">`;
+                } else if(file.type.startsWith('video/')) {
+                    htmlTag = `<video src="${result}" controls autoplay muted loop></video>`;
+                }
+                
+                // Append to existing content or replace? Let's replace for simplicity as per request "find files i need to link"
+                const h = hotspots.find(x => x.id === targetHotspotIdForMedia);
+                if(h) {
+                    h.content = htmlTag; // Pure media, no text container by default for sleekness
+                    renderHotspotList(); // Refresh UI text area
+                }
+                // Reset
+                event.target.value = '';
+                targetHotspotIdForMedia = null;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function renderHotspotList() {
+            const container = document.getElementById('hotspot-list-container');
+            container.innerHTML = '';
+            
+            hotspots.forEach((h, i) => {
+                const row = document.createElement('div');
+                row.className = "bg-[#1a1a1a] p-2 rounded border border-[#333] space-y-2";
+                row.innerHTML = `
+                    <div class="flex justify-between items-center">
+                        <span class="text-[10px] font-bold text-neutral-400">#${i+1}</span>
+                        <button class="text-red-500 hover:text-red-400 text-[10px]" onclick="window.dispatchEvent(new CustomEvent('delete-hotspot', {detail: '${h.id}'}))">DELETE</button>
+                    </div>
+                    <div class="flex gap-2">
+                         <textarea class="w-full bg-[#111] text-[10px] text-white p-1 rounded border border-[#333] h-12" placeholder="HTML Content" oninput="window.dispatchEvent(new CustomEvent('update-hotspot', {detail: {id: '${h.id}', val: this.value}}))">${h.content}</textarea>
+                         <button class="bg-blue-900/50 hover:bg-blue-700 text-blue-200 text-[10px] px-2 rounded border border-blue-800" title="Attach Image/Video" onclick="window.dispatchEvent(new CustomEvent('attach-media', {detail: '${h.id}'}))">Attach<br>Media</button>
+                    </div>
+                `;
+                container.appendChild(row);
+            });
+        }
+        
+        function updateHotspotVisuals() {
+            hotspots.forEach(h => {
+                if(h.spriteRef) {
+                    h.spriteRef.scale.set(config.hsSize, config.hsSize, config.hsSize);
+                }
+            });
+        }
+        
+        function updateHotspotPopupScale() {
+             document.documentElement.style.setProperty('--card-scale', config.hsPopupScale + 'px');
+        }
+
+        function onPointerDown(event) {
+            // Only handle left clicks on canvas
+            if(event.target.id !== 'canvas-container' && event.target.tagName !== 'CANVAS') return;
+            
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            
+            raycaster.setFromCamera(pointer, camera);
+
+            if (isPlacementMode) {
+                // Raycast against model to place
+                if (!modelObject) return;
+                const intersects = raycaster.intersectObject(modelObject, true);
+                if (intersects.length > 0) {
+                    const point = intersects[0].point;
+                    // Nudge slightly along normal to prevent clipping
+                    point.add(intersects[0].face.normal.multiplyScalar(0.05));
+                    createHotspot(point);
+                }
+            } else {
+                // Raycast against sprites to view
+                const sprites = hotspots.map(h => h.spriteRef);
+                const intersects = raycaster.intersectObjects(sprites, false);
+                
+                if (intersects.length > 0) {
+                    const sprite = intersects[0].object;
+                    const hotspot = hotspots.find(h => h.id === sprite.userData.id);
+                    if(hotspot) openHotspotPopup(hotspot);
+                } else {
+                    // CLICKED OUTSIDE: Close popup
+                    closeHotspotPopup();
+                }
+            }
+        }
+
+        function openHotspotPopup(hotspot) {
+            activeHotspot = hotspot;
+            const card = document.getElementById('hotspot-card');
+            const content = document.getElementById('card-content');
+            
+            content.innerHTML = hotspot.content;
+            
+            card.classList.add('visible');
+            updateHotspotPopupPosition();
+        }
+
+        function closeHotspotPopup() {
+            activeHotspot = null;
+            document.getElementById('hotspot-card').classList.remove('visible');
+        }
+
+        function updateHotspotPopupPosition() {
+            if (!activeHotspot) return;
+            const card = document.getElementById('hotspot-card');
+            
+            // Project 3D position to 2D screen
+            const pos = activeHotspot.spriteRef.position.clone();
+            pos.project(camera);
+            
+            const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(pos.y * 0.5) + 0.5) * window.innerHeight;
+            
+            card.style.left = `${x}px`;
+            card.style.top = `${y}px`;
+        }
+        
+        // --- ASSET LOADING HELPERS ---
+        function loadModelFromBase64(base64) {
+            return new Promise((resolve) => {
+                document.getElementById('loading-overlay').style.display = 'flex';
+                document.getElementById('loading-overlay').style.opacity = '1';
+                
+                // Clear old scene parts
+                if (modelObject) scene.remove(modelObject);
+                hotspots.forEach(h => scene.remove(h.spriteRef));
+                hotspots = [];
+                renderHotspotList();
+                closeHotspotPopup();
+
+                const bin = window.atob(base64);
+                const len = bin.length;
+                const bytes = new Uint8Array(len);
+                for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+
+                const loader = new GLTFLoader();
+                loader.parse(bytes.buffer, '', function(gltf) {
+                    modelObject = gltf.scene;
+                    const box = new THREE.Box3().setFromObject(modelObject);
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const scaleFactor = 10 / maxDim;
+                    modelObject.scale.setScalar(scaleFactor);
+                    
+                    const newBox = new THREE.Box3().setFromObject(modelObject);
+                    const center = newBox.getCenter(new THREE.Vector3());
+                    modelObject.position.sub(center);
+                    modelObject.position.y -= new THREE.Box3().setFromObject(modelObject).min.y;
+
+                    modelObject.traverse(function(node) {
+                        if (node.isMesh) {
+                            node.castShadow = true;
+                            node.receiveShadow = true;
+                            if (!(node.material instanceof THREE.MeshPhysicalMaterial)) {
+                                const newMat = new THREE.MeshPhysicalMaterial();
+                                THREE.MeshStandardMaterial.prototype.copy.call(newMat, node.material);
+                                node.material = newMat;
+                            }
+                            node.material.shadowSide = THREE.DoubleSide;
+                        }
+                    });
+                    
+                    scene.add(modelObject);
+                    updateMaterialSettings();
+                    
+                    const maxSize = 10;
+                    camera.near = maxSize / 1000;
+                    camera.far = maxSize * 100;
+                    camera.updateProjectionMatrix();
+                    controls.maxDistance = maxSize * 20;
+                    controls.target.set(0, maxSize/4, 0); 
+                    camera.position.set(maxSize * 0.8, maxSize * 0.8, maxSize * 1.5);
+                    controls.update();
+
+                    const shadowCamSize = maxSize * 1.5;
+                    sunLight.shadow.camera.left = -shadowCamSize;
+                    sunLight.shadow.camera.right = shadowCamSize;
+                    sunLight.shadow.camera.top = shadowCamSize;
+                    sunLight.shadow.camera.bottom = -shadowCamSize;
+                    sunLight.shadow.camera.near = 0.1;
+                    sunLight.shadow.camera.far = maxSize * 5;
+                    sunLight.shadow.camera.updateProjectionMatrix();
+                    
+                    if(config.edgeVisible) rebuildEdges();
+
+                    document.getElementById('loading-overlay').style.opacity = '0';
+                    setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 800);
+                    resolve();
+                });
+            });
+        }
+
+        function loadHdriFromBase64(base64) {
+            new RGBELoader().load(base64, function(texture) {
+                texture.mapping = THREE.EquirectangularReflectionMapping;
+                scene.environment = texture;
+            });
+        }
+
+        // --- HANDLERS ---
+        function handleFileSelect(evt) {
+            const file = evt.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const arrayBuffer = e.target.result;
+                currentModelBase64 = arrayBufferToBase64(arrayBuffer);
+                loadModelFromBase64(currentModelBase64);
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function handleHdrSelect(evt) {
+            const file = evt.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const dataUrl = e.target.result; 
+                currentHdriBase64 = dataUrl;
+                loadHdriFromBase64(currentHdriBase64);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function arrayBufferToBase64(buffer) {
+            let binary = '';
+            const bytes = new Uint8Array(buffer);
+            const len = bytes.byteLength;
+            for (let i = 0; i < len; i++) { binary += String.fromCharCode(bytes[i]); }
+            return window.btoa(binary);
+        }
+
+        // --- SAVE / LOAD SYSTEM ---
+        function saveProject() {
+            const projectData = {
+                version: "5.0",
+                timestamp: Date.now(),
+                config: config,
+                modelBase64: currentModelBase64,
+                hdriBase64: currentHdriBase64,
+                hotspots: hotspots.map(h => ({ id: h.id, position: h.position, content: h.content }))
+            };
+            
+            const jsonString = JSON.stringify(projectData);
+            const blob = new Blob([jsonString], {type: "application/json"});
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = (config.projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase() || 'untitled') + '.3dproject';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function loadProject(evt) {
+            const file = evt.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = async function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    
+                    // 1. Restore Config
+                    if(data.config) {
+                        config = { ...config, ...data.config };
+                        syncUI(); // Trigger UI updates
+                        // Manually trigger updates that syncUI might miss due to direct value setting
+                        updateLights(); 
+                        updateBackground();
+                        updateHotspotVisuals();
+                        updateBranding();
+                        updateBrandingVisibility();
+                        updateHotspotPopupScale();
+                    }
+
+                    // 2. Restore Model
+                    if(data.modelBase64) {
+                        currentModelBase64 = data.modelBase64;
+                        await loadModelFromBase64(currentModelBase64);
+                    }
+
+                    // 3. Restore HDRI
+                    if(data.hdriBase64) {
+                        currentHdriBase64 = data.hdriBase64;
+                        loadHdriFromBase64(currentHdriBase64);
+                    } else {
+                        scene.environment = null;
+                    }
+
+                    // 4. Restore Hotspots
+                    if(data.hotspots) {
+                        // Clear already handled by loadModel, but safety check
+                        data.hotspots.forEach(h => {
+                            createHotspot(new THREE.Vector3(h.position.x, h.position.y, h.position.z), h.id, h.content);
+                        });
+                    }
+                    
+                    // Reset input
+                    evt.target.value = '';
+
+                } catch(err) {
+                    alert("Error loading project file: " + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function updateBackground() {
+            const container = document.getElementById('canvas-container');
+            container.style.background = `linear-gradient(to bottom, ${config.bgTop}, ${config.bgBot})`;
+            container.style.filter = `contrast(${config.contrast}) saturate(${config.saturation})`;
+        }
+
+        function updateBranding() {
+            document.getElementById('brand-title-display').innerText = config.projectTitle;
+            document.getElementById('brand-author-display').innerText = config.projectAuthor;
+        }
+        
+        function updateBrandingVisibility() {
+            const overlay = document.getElementById('branding-overlay');
+            if(config.brandingVisible) overlay.classList.remove('hidden');
+            else overlay.classList.add('hidden');
+        }
+
+        function setupUIListeners() {
+            const bind = (id, prop, type = 'float', customDisplayId = null) => {
+                const el = document.getElementById(id);
+                if(!el) return;
+                el.addEventListener('input', (e) => {
+                    config[prop] = type === 'float' ? parseFloat(e.target.value) : e.target.value;
+                    if(type === 'bool') config[prop] = e.target.checked;
+                    
+                    // Visual Updates for Compact Sliders
+                    updateSliderVisual(id, e.target.value);
+                    
+                    // Label Updates
+                    let targetId = customDisplayId;
+                    if (!targetId) targetId = `val-${id}`; // New ID scheme: val-mat-roughness
+                    
+                    const display = document.getElementById(targetId);
+                    if(display) {
+                        display.innerText = e.target.value + (id.includes('azimuth') || id.includes('elevation') || id.includes('angle') ? '°' : '') + (id.includes('delay') ? 's' : '') + (id.includes('scale') ? 'px' : '');
+                    }
+                    
+                    updateLights();
+                    updateMaterialSettings();
+                    updateBackground();
+                    if(id.includes('edge')) updateEdges();
+                    if(id.includes('hs')) updateHotspotVisuals();
+                    if(id.includes('hs-popup-scale')) updateHotspotPopupScale();
+                    
+                    controls.autoRotate = config.autoRotate;
+                    controls.autoRotateSpeed = config.rotateSpeed;
+                });
+            };
+
+            bind('bg-color-1', 'bgTop', 'color');
+            bind('bg-color-2', 'bgBot', 'color');
+            bind('sun-intensity', 'sunIntensity');
+            bind('sun-color', 'sunColor', 'color');
+            bind('sun-azimuth', 'sunAzimuth');
+            bind('sun-elevation', 'sunElevation');
+            bind('amb-intensity', 'ambIntensity');
+            bind('amb-color', 'ambColor', 'color');
+            bind('shadow-bias', 'shadowBias');
+            bind('shadow-normal-bias', 'normalBias');
+            bind('shadow-opacity', 'shadowOpacity');
+            bind('cam-exposure', 'exposure');
+            bind('cam-contrast', 'contrast');
+            bind('cam-saturation', 'saturation');
+            bind('mat-roughness', 'roughness');
+            bind('mat-metalness', 'metalness');
+            bind('mat-specular', 'specularIntensity'); 
+            bind('ao-intensity', 'aoIntensity');
+            bind('rot-speed', 'rotateSpeed');
+            bind('rot-delay', 'autoRotateDelay');
+            
+            bind('edge-angle', 'edgeThreshold');
+            bind('edge-color', 'edgeColor', 'color');
+            bind('edge-opacity', 'edgeOpacity');
+            
+            // Hotspot visual bindings
+            bind('hs-size', 'hsSize');
+            bind('hs-opacity', 'hsOpacity');
+            bind('hs-popup-scale', 'hsPopupScale');
+
+            document.getElementById('edge-visible').addEventListener('change', (e) => {
+                config.edgeVisible = e.target.checked;
+                rebuildEdges();
+                updateEdges();
+            });
+            document.getElementById('branding-visible').addEventListener('change', (e) => {
+                config.brandingVisible = e.target.checked;
+                updateBrandingVisibility();
+            });
+            document.getElementById('edge-angle').addEventListener('change', () => { rebuildEdges(); });
+            document.getElementById('sun-cast-shadow').addEventListener('change', (e) => {
+                config.sunCastShadow = e.target.checked;
+                updateLights();
+            });
+            document.getElementById('brand-title-input').addEventListener('input', (e) => {
+                config.projectTitle = e.target.value; updateBranding();
+            });
+            document.getElementById('brand-author-input').addEventListener('input', (e) => {
+                config.projectAuthor = e.target.value; updateBranding();
+            });
+            document.getElementById('file-input').addEventListener('change', handleFileSelect);
+            document.getElementById('hdr-input').addEventListener('change', handleHdrSelect);
+            document.getElementById('btn-remove-hdri').addEventListener('click', () => { scene.environment = null; currentHdriBase64 = null; });
+            document.getElementById('auto-rotate').addEventListener('change', (e) => { 
+                config.autoRotate = e.target.checked; controls.autoRotate = e.target.checked;
+                if(!config.autoRotate) clearTimeout(rotationTimeout);
+            });
+            document.getElementById('mat-disable-reflections').addEventListener('change', (e) => { config.disableReflections = e.target.checked; updateMaterialSettings(); });
+            document.getElementById('btn-export').addEventListener('click', () => exportProject('standalone'));
+            document.getElementById('btn-export-zip').addEventListener('click', () => exportProject('zip'));
+
+            // Hotspot Listeners
+            document.getElementById('btn-toggle-place').addEventListener('click', togglePlacementMode);
+            document.getElementById('btn-close-card').addEventListener('click', closeHotspotPopup);
+            document.getElementById('media-picker').addEventListener('change', handleMediaSelection);
+            
+            // Save/Load Listeners
+            document.getElementById('btn-save-project').addEventListener('click', saveProject);
+            document.getElementById('btn-load-project').addEventListener('click', () => document.getElementById('project-load-input').click());
+            document.getElementById('project-load-input').addEventListener('change', loadProject);
+            
+            // Custom Events for List interactions
+            window.addEventListener('delete-hotspot', (e) => deleteHotspot(e.detail));
+            window.addEventListener('update-hotspot', (e) => updateHotspotData(e.detail.id, e.detail.val));
+            window.addEventListener('attach-media', (e) => attachMediaToHotspot(e.detail));
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            updateHotspotPopupPosition();
+            
+            // Occlusion Logic for Hotspots
+            if(hotspots.length > 0 && modelObject) {
+                hotspots.forEach(h => {
+                    if(!h.spriteRef) return;
+                    
+                    // Simple distance/direction check
+                    const screenPos = h.spriteRef.position.clone();
+                    screenPos.project(camera);
+                    
+                    raycaster.setFromCamera(screenPos, camera);
+                    const intersects = raycaster.intersectObject(modelObject, true);
+                    
+                    // If model is closer than sprite, fade it
+                    if(intersects.length > 0) {
+                        const distToModel = intersects[0].distance;
+                        const distToSprite = h.spriteRef.position.distanceTo(camera.position);
+                        if(distToModel < distToSprite - 0.2) { // Tolerance
+                            h.spriteRef.material.opacity = config.hsOpacity * 0.2; // Fade based on master opacity
+                        } else {
+                            h.spriteRef.material.opacity = config.hsOpacity;
+                        }
+                    } else {
+                        h.spriteRef.material.opacity = config.hsOpacity;
+                    }
+                });
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        async function exportProject(mode = 'standalone') {
+            const isZip = mode === 'zip';
+            const btn = document.getElementById(isZip ? 'btn-export-zip' : 'btn-export');
+            const originalText = btn.innerText;
+            btn.innerText = "Processing...";
+            config.camPos = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+            config.camTarget = { x: controls.target.x, y: controls.target.y, z: controls.target.z };
+            
+            // Prepare Hotspot Data for Export (remove spriteRef circular ref)
+            const exportHotspots = hotspots.map(h => ({
+                id: h.id,
+                position: h.position,
+                content: h.content
+            }));
+
+            setTimeout(async () => {
+                let modelReference = "null";
+                let hdriReference = "null";
+                if (isZip) {
+                    const zip = new JSZip();
+                    if(currentModelBase64) {
+                        modelReference = '"model.glb"';
+                        zip.file("model.glb", currentModelBase64, {base64: true});
+                    }
+                    if(currentHdriBase64) {
+                        hdriReference = '"environment.hdr"';
+                        const base64Data = currentHdriBase64.split(',')[1];
+                        zip.file("environment.hdr", base64Data, {base64: true});
+                    }
+                    const htmlContent = generateExportHTML(true, modelReference, hdriReference, exportHotspots);
+                    zip.file("index.html", htmlContent);
+                    const content = await zip.generateAsync({type:"blob"});
+                    const a = document.createElement("a");
+                    a.href = URL.createObjectURL(content);
+                    a.download = `${config.projectTitle.replace(/[^a-z0-9]/gi, '_').toLowerCase()}_package.zip`;
+                    a.click();
+
+                } else {
+                    if (currentModelBase64) modelReference = `"${currentModelBase64}"`;
+                    if (currentHdriBase64) hdriReference = `"${currentHdriBase64}"`;
+                    const htmlContent = generateExportHTML(false, modelReference, hdriReference, exportHotspots);
+                    const blob = new Blob([htmlContent], { type: 'text/html' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = '3d_viewer_interactive.html';
+                    a.click();
+                }
+                btn.innerText = originalText;
+            }, 500);
+        }
+
+        function generateExportHTML(isZip, modelRef, hdriRef, hotspotsData) {
+            const loaderLogic = isZip 
+                ? `new GLTFLoader().load(modelData, (gltf) => { setupScene(gltf); });`
+                : `const bin = window.atob(modelData); const len = bin.length; const bytes = new Uint8Array(len); for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i); new GLTFLoader().parse(bytes.buffer, '', (gltf) => { setupScene(gltf); });`;
+
+            return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${config.projectTitle}</title>
+    <style>
+        body{margin:0;overflow:hidden;background:linear-gradient(to bottom, ${config.bgTop}, ${config.bgBot}); font-family: sans-serif; color: white;}
+        #canvas-container { width: 100vw; height: 100vh; position: absolute; top: 0; left: 0; filter: contrast(${config.contrast}) saturate(${config.saturation}); }
+        #vignette-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 1; background: radial-gradient(circle, rgba(0,0,0,0) 50%, rgba(0,0,0,0.4) 100%); }
+        #branding-overlay { position: absolute; bottom: 20px; left: 20px; z-index: 5; pointer-events: none; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+        .hidden { display: none !important; }
+        #loading-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 50; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.8s ease-out; }
+        .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.3); border-radius: 50%; border-top-color: #fff; animation: spin 1s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        /* Sleek Hotspot Popup */
+        .hotspot-card {
+            position: absolute; top: 0; left: 0; 
+            max-width: ${config.hsPopupScale}px; max-height: ${config.hsPopupScale}px; width: auto; height: auto;
+            background: rgba(20, 20, 20, 0.85); backdrop-filter: blur(12px); border: none; border-radius: 16px; padding: 0;
+            color: white; z-index: 100; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            display: none; transform: translate(-50%, -105%); opacity: 0; transition: opacity 0.2s ease; overflow: hidden;
+            display: none; flex-direction: column;
+        }
+        .hotspot-card.visible { display: flex; opacity: 1; }
+        .hotspot-card img, .hotspot-card video { width: auto; height: auto; max-width: 100%; max-height: 100%; display: block; margin: 0; object-fit: contain; }
+        .hotspot-content-inner { padding: 16px; }
+        #card-content { display: flex; flex-direction: column; overflow: auto; max-height: 100%; width: 100%; }
+        .hotspot-content-inner p { font-size: 13px; color: #ddd; line-height: 1.5; margin: 0; font-weight: 300; }
+        .hotspot-content-inner:empty { display: none; }
+        .hotspot-close { 
+            position: absolute; top: 12px; right: 12px; width: 24px; height: 24px; background: rgba(0,0,0,0.4);
+            backdrop-filter: blur(4px); border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            cursor: pointer; color: #fff; font-size: 14px; line-height: 1; transition: background 0.2s; z-index: 10;
+        }
+        .hotspot-close:hover { background: rgba(255,255,255,0.2); }
+    </style>
+    <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}<\/script>
+</head>
+<body>
+    <div id="loading-overlay"><div class="spinner" style="margin-bottom: 1rem;"></div></div>
+    <div id="vignette-overlay"></div>
+    <div id="branding-overlay" class="${config.brandingVisible ? '' : 'hidden'}"><h1 style="font-size: 1.5rem; font-weight: 300; margin: 0;">${config.projectTitle}</h1><p style="font-size: 0.75rem; color: #aaa; margin: 5px 0 0 0; text-transform: uppercase; letter-spacing: 0.1em;">${config.projectAuthor}</p></div>
+    
+    <div id="hotspot-card" class="hotspot-card">
+        <div class="hotspot-close" id="btn-close-card">×</div>
+        <div id="card-content"></div>
+    </div>
+
+    <div id="canvas-container"></div>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+        import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+
+        const config = ${JSON.stringify(config)};
+        const modelData = ${modelRef};
+        const hdriData = ${hdriRef};
+        const hotspotsData = ${JSON.stringify(hotspotsData)};
+        
+        let rotationTimeout;
+        let activeHotspot = null;
+        let modelObject = null;
+        let hotspots = [];
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+        renderer.outputEncoding = THREE.SRGBColorSpace; renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = config.exposure;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 1000);
+        camera.position.set(config.camPos.x, config.camPos.y, config.camPos.z);
+        camera.near = 0.01; camera.far = 2000; camera.updateProjectionMatrix();
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true; controls.dampingFactor = 0.05; 
+        controls.enableZoom = true; controls.zoomSpeed = 0.8; 
+        controls.rotateSpeed = 0.5; controls.panSpeed = 0.5;
+        controls.screenSpacePanning = true;
+        controls.autoRotate = config.autoRotate; controls.autoRotateSpeed = config.rotateSpeed;
+        controls.maxDistance = 200; controls.target.set(config.camTarget.x, config.camTarget.y, config.camTarget.z);
+        controls.update();
+
+        controls.addEventListener('start', () => { clearTimeout(rotationTimeout); controls.autoRotate = false; });
+        controls.addEventListener('end', () => { if (config.autoRotate) { clearTimeout(rotationTimeout); rotationTimeout = setTimeout(() => { controls.autoRotate = true; }, config.autoRotateDelay * 1000); } });
+
+        const ambientLight = new THREE.AmbientLight(config.ambColor, config.ambIntensity); scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(config.sunColor, config.sunIntensity);
+        sunLight.castShadow = config.sunCastShadow;
+        sunLight.shadow.mapSize.width = 2048; sunLight.shadow.mapSize.height = 2048;
+        sunLight.shadow.bias = config.shadowBias; sunLight.shadow.normalBias = config.normalBias;
+        
+        const r = 20;
+        const phi = THREE.MathUtils.degToRad(90 - config.sunElevation);
+        const theta = THREE.MathUtils.degToRad(config.sunAzimuth);
+        sunLight.position.set(r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi), r * Math.sin(phi) * Math.cos(theta));
+        scene.add(sunLight);
+
+        const plane = new THREE.Mesh(new THREE.PlaneGeometry(200, 200), new THREE.ShadowMaterial({ opacity: config.shadowOpacity }));
+        plane.rotation.x = -Math.PI / 2; plane.position.y = -0.01; plane.receiveShadow = true; scene.add(plane);
+
+        if(hdriData) { new RGBELoader().load(hdriData, (tex) => { tex.mapping = THREE.EquirectangularReflectionMapping; scene.environment = tex; }); }
+        document.getElementById('canvas-container').style.background = \`linear-gradient(to bottom, \${config.bgTop}, \${config.bgBot})\`;
+
+        // Sprite Material
+        const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64;
+        const ctx = canvas.getContext('2d'); ctx.beginPath(); ctx.arc(32, 32, 28, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 255, 255, 1.0)"; ctx.fill(); ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0, 0, 0, 0.5)"; ctx.stroke();
+        const spriteMat = new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), depthTest: false, depthWrite: false });
+
+        function setupScene(gltf) {
+            modelObject = gltf.scene;
+            const box = new THREE.Box3().setFromObject(modelObject);
+            const size = box.getSize(new THREE.Vector3());
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const scaleFactor = 10/maxDim;
+            modelObject.scale.setScalar(scaleFactor);
+            const newBox = new THREE.Box3().setFromObject(modelObject);
+            modelObject.position.sub(newBox.getCenter(new THREE.Vector3()));
+            modelObject.position.y -= new THREE.Box3().setFromObject(modelObject).min.y;
+
+            modelObject.traverse(n => {
+                if(n.isMesh) {
+                    n.castShadow = true; n.receiveShadow = true;
+                    if(!(n.material instanceof THREE.MeshPhysicalMaterial)) {
+                        const newMat = new THREE.MeshPhysicalMaterial();
+                        THREE.MeshStandardMaterial.prototype.copy.call(newMat, n.material);
+                        n.material = newMat;
+                    }
+                    n.material.shadowSide = THREE.DoubleSide;
+                    if(config.disableReflections) { n.material.roughness = 1.0; n.material.metalness = 0.0; n.material.specularIntensity = 0.0; }
+                    else { n.material.roughness = config.roughness; n.material.metalness = config.metalness; n.material.envMapIntensity = config.envMapIntensity; n.material.specularIntensity = config.specularIntensity; }
+                    if(config.edgeVisible) {
+                        const edgesGeom = new THREE.EdgesGeometry(n.geometry, parseFloat(config.edgeThreshold));
+                        const edgesMat = new THREE.LineBasicMaterial({ color: config.edgeColor, transparent: true, opacity: config.edgeOpacity });
+                        const edges = new THREE.LineSegments(edgesGeom, edgesMat);
+                        n.add(edges);
+                    }
+                }
+            });
+            scene.add(modelObject);
+            
+            // Init Hotspots
+            hotspotsData.forEach(h => {
+                const sprite = new THREE.Sprite(spriteMat);
+                sprite.position.set(h.position.x, h.position.y, h.position.z);
+                sprite.scale.set(config.hsSize, config.hsSize, config.hsSize);
+                sprite.material.opacity = config.hsOpacity;
+                sprite.renderOrder = 999;
+                sprite.userData = { id: h.id };
+                scene.add(sprite);
+                hotspots.push({ ...h, spriteRef: sprite });
+            });
+
+            const d = 10; sunLight.shadow.camera.left = -d; sunLight.shadow.camera.right = d; sunLight.shadow.camera.top = d; sunLight.shadow.camera.bottom = -d; sunLight.shadow.camera.updateProjectionMatrix();
+            const maxSize = 10; controls.maxDistance = maxSize * 20; camera.near = maxSize / 1000; camera.far = maxSize * 100; camera.updateProjectionMatrix();
+            document.getElementById('loading-overlay').style.opacity = '0';
+            setTimeout(() => document.getElementById('loading-overlay').style.display = 'none', 800);
+        }
+
+        function updateHotspotPos() {
+            if (!activeHotspot) return;
+            const card = document.getElementById('hotspot-card');
+            const pos = activeHotspot.spriteRef.position.clone();
+            pos.project(camera);
+            const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-(pos.y * 0.5) + 0.5) * window.innerHeight;
+            card.style.left = \`\${x}px\`; card.style.top = \`\${y}px\`;
+        }
+        
+        document.getElementById('btn-close-card').onclick = () => { document.getElementById('hotspot-card').classList.remove('visible'); activeHotspot = null; };
+        
+        window.addEventListener('pointerdown', (event) => {
+            if(event.target.id !== 'canvas-container' && event.target.tagName !== 'CANVAS') return;
+            pointer.x = (event.clientX / window.innerWidth) * 2 - 1;
+            pointer.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            const sprites = hotspots.map(h => h.spriteRef);
+            const intersects = raycaster.intersectObjects(sprites, false);
+            if (intersects.length > 0) {
+                const id = intersects[0].object.userData.id;
+                const h = hotspots.find(x => x.id === id);
+                if(h) {
+                    activeHotspot = h;
+                    document.getElementById('card-content').innerHTML = h.content;
+                    document.getElementById('hotspot-card').classList.add('visible');
+                    updateHotspotPos();
+                }
+            } else {
+                // Click Outside
+                document.getElementById('hotspot-card').classList.remove('visible'); activeHotspot = null;
+            }
+        });
+        
+        // ESC Key
+        window.addEventListener('keydown', (e) => { if(e.key === 'Escape') { document.getElementById('hotspot-card').classList.remove('visible'); activeHotspot = null; } });
+
+        if(modelData) { ${loaderLogic} } else { document.getElementById('loading-overlay').style.display = 'none'; }
+        window.addEventListener('resize', () => { camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix(); renderer.setSize(window.innerWidth, window.innerHeight); });
+        
+        function animate() { 
+            requestAnimationFrame(animate); 
+            controls.update(); 
+            updateHotspotPos();
+            
+            // Occlusion
+             if(hotspots.length > 0 && modelObject) {
+                hotspots.forEach(h => {
+                    const screenPos = h.spriteRef.position.clone().project(camera);
+                    raycaster.setFromCamera(screenPos, camera);
+                    const intersects = raycaster.intersectObject(modelObject, true);
+                    if(intersects.length > 0) {
+                        const distToModel = intersects[0].distance;
+                        const distToSprite = h.spriteRef.position.distanceTo(camera.position);
+                        if(distToModel < distToSprite - 0.2) h.spriteRef.material.opacity = config.hsOpacity * 0.2;
+                        else h.spriteRef.material.opacity = config.hsOpacity;
+                    } else { h.spriteRef.material.opacity = config.hsOpacity; }
+                });
+            }
+
+            renderer.render(scene, camera); 
+        }
+        animate();
+    <\/script>
+</body>
+</html>`;
+        }
+
+        init();
+    </script>
+</body>
+</html>
